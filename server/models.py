@@ -1,53 +1,63 @@
 from flask_sqlalchemy import SQLAlchemy
-from sqlalchemy.orm import validates
+from sqlalchemy import MetaData
+from sqlalchemy.orm import validates, relationship
+from sqlalchemy.ext.associationproxy import association_proxy
+from sqlalchemy_serializer import SerializerMixin
 
-db = SQLAlchemy()
+metadata = MetaData(
+    naming_convention={
+        "fk": "fk_%(table_name)s_%(column_0_name)s_%(referred_table_name)s",
+    }
+)
 
-class Restaurant(db.Model):
+db = SQLAlchemy(metadata=metadata)
+
+class Restaurant(db.Model, SerializerMixin):
+    __tablename__ = "restaurants"
+    serialize_rules = ('-restaurant_pizzas.restaurant',)
+
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String, nullable=False)
-    address = db.Column(db.String, nullable=False)
-    restaurant_pizzas = db.relationship('RestaurantPizza', backref='restaurant', cascade="all, delete-orphan")
+    name = db.Column(db.String)
+    address = db.Column(db.String)
 
-    def to_dict(self, only=None, include=None):
-        data = {column.name: getattr(self, column.name) for column in self.__table__.columns}
-        if include:
-            for item in include:
-                data[item] = [x.to_dict() for x in getattr(self, item)]
-        if only:
-            data = {k: data[k] for k in only}
-        return data
+    restaurant_pizzas = relationship('RestaurantPizza', back_populates='restaurant', cascade='all, delete-orphan')
+    pizzas = association_proxy('restaurant_pizzas', 'pizza')
 
-class Pizza(db.Model):
+    def __repr__(self):
+        return f"<Restaurant {self.name}>"
+
+class Pizza(db.Model, SerializerMixin):
+    __tablename__ = "pizzas"
+    serialize_rules = ('-restaurant_pizzas.pizza',)
+
     id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String, nullable=False)
-    ingredients = db.Column(db.String, nullable=False)
-    restaurant_pizzas = db.relationship('RestaurantPizza', backref='pizza', cascade="all, delete-orphan")
+    name = db.Column(db.String)
+    ingredients = db.Column(db.String)
 
-    def to_dict(self, only=None):
-        data = {column.name: getattr(self, column.name) for column in self.__table__.columns}
-        if only:
-            data = {k: data[k] for k in only}
-        return data
+    restaurant_pizzas = relationship('RestaurantPizza', back_populates='pizza', cascade='all, delete-orphan')
+    restaurants = association_proxy('restaurant_pizzas', 'restaurant')
 
-class RestaurantPizza(db.Model):
+    def __repr__(self):
+        return f"<Pizza {self.name}, {self.ingredients}>"
+
+class RestaurantPizza(db.Model, SerializerMixin):
+    __tablename__ = "restaurant_pizzas"
+    serialize_rules = ('-restaurant.restaurant_pizzas', '-pizza.restaurant_pizzas',)
+
     id = db.Column(db.Integer, primary_key=True)
     price = db.Column(db.Integer, nullable=False)
-    restaurant_id = db.Column(db.Integer, db.ForeignKey('restaurant.id'), nullable=False)
-    pizza_id = db.Column(db.Integer, db.ForeignKey('pizza.id'), nullable=False)
+
+    restaurant_id = db.Column(db.Integer, db.ForeignKey('restaurants.id'))
+    pizza_id = db.Column(db.Integer, db.ForeignKey('pizzas.id'))
+
+    restaurant = relationship('Restaurant', back_populates='restaurant_pizzas')
+    pizza = relationship('Pizza', back_populates='restaurant_pizzas')
 
     @validates('price')
-    def validate_price(self, key, value):
-        if value < 1 or value > 30:
+    def validate_price(self, key, price):
+        if price < 1 or price > 30:
             raise ValueError("Price must be between 1 and 30")
-        return value
+        return price
 
-    def to_dict(self):
-        return {
-            'id': self.id,
-            'price': self.price,
-            'pizza': self.pizza.to_dict(),
-            'pizza_id': self.pizza_id,
-            'restaurant': self.restaurant.to_dict(),
-            'restaurant_id': self.restaurant_id
-        }
+    def __repr__(self):
+        return f"<RestaurantPizza ${self.price},{self.pizza_id}.{self.restaurant_id}>"
